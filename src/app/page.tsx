@@ -1,37 +1,101 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { useRealtimeAgent } from "@/hooks/useRealtimeAgent";
+import { useWakeWordDetection } from "@/hooks/useWakeWordDetection";
 
 export default function Home() {
+  const wakeWord = process.env.NEXT_PUBLIC_WAKE_WORD || "guide";
+
+  // Wake word detection hook
+  const {
+    isListening,
+    wakeWordDetected,
+    conversationActive,
+    error: speechError,
+    startListening,
+    stopListening,
+    clearError: clearSpeechError,
+    pauseSilenceTimer,
+    resumeSilenceTimer,
+  } = useWakeWordDetection({
+    wakeWord,
+    onWakeWordDetected: () => {
+      // Wait 800ms before connecting to ensure wake word audio clears
+      // This prevents the wake word phrase from being sent to OpenAI
+      setTimeout(() => {
+        connect();
+      }, 800);
+    },
+    onConversationTimeout: () => {
+      // Disconnect from OpenAI when conversation times out
+      disconnect();
+    },
+  });
+
+  // OpenAI Realtime Agent hook
   const {
     isConnected,
     isConnecting,
-    isListening,
-    conversationActive,
-    wakeWordDetected,
-    startListening,
-    stopListening,
-    error,
-    clearError,
-  } = useRealtimeAgent();
+    isSpeaking,
+    error: agentError,
+    connect,
+    disconnect,
+    clearError: clearAgentError,
+  } = useRealtimeAgent({
+    onAudioStart: () => {
+      // Pause silence timer when AI starts speaking
+      pauseSilenceTimer();
+    },
+    onAudioStopped: () => {
+      // Resume silence timer when AI finishes speaking
+      resumeSilenceTimer();
+    },
+    onUserSpeechStart: () => {
+      // User started speaking (follow-up question)
+      // Pause timer while user is speaking
+      pauseSilenceTimer();
+    },
+    onUserSpeechStop: () => {
+      // User finished speaking
+      // DON'T resume timer yet - wait for AI to finish responding
+      // Timer will resume when AI finishes speaking
+    },
+  });
+
+  // Merge errors from both hooks
+  const error = agentError || speechError;
+  const clearError = () => {
+    clearAgentError();
+    clearSpeechError();
+  };
 
   const getStatusText = () => {
     if (error) return `Error: ${error}`;
     if (isConnecting) return "Connecting to AI...";
-    if (conversationActive && isConnected) return "In conversation - speak naturally";
+    if (isSpeaking) return "AI is speaking...";
+    if (conversationActive && isConnected) return "Listening - speak your question";
     if (wakeWordDetected) return "Wake word detected - connecting...";
-    if (isListening) return `Say "${process.env.NEXT_PUBLIC_WAKE_WORD}" to start`;
+    if (isListening) return `Say "${wakeWord}" to start`;
     return "Click to start listening";
   };
 
   const getStatusColor = () => {
     if (error) return "bg-red-500";
     if (isConnecting) return "bg-yellow-500";
+    if (isSpeaking) return "bg-purple-500 speaking-bounce";
     if (conversationActive && isConnected) return "bg-green-500 listening-pulse";
     if (wakeWordDetected) return "bg-blue-500";
     if (isListening) return "bg-gray-500";
     return "bg-gray-400";
+  };
+
+  const handleToggleListening = () => {
+    if (isListening) {
+      stopListening();
+      disconnect();
+    } else {
+      startListening();
+    }
   };
 
   return (
@@ -58,7 +122,7 @@ export default function Home() {
           {/* Main Control Button */}
           <div className="flex justify-center">
             <button
-              onClick={isListening ? stopListening : startListening}
+              onClick={handleToggleListening}
               disabled={isConnecting}
               className={`
                 w-24 h-24 rounded-full flex items-center justify-center
@@ -109,7 +173,7 @@ export default function Home() {
             <p>
               Say{" "}
               <span className="font-semibold">
-                "{process.env.NEXT_PUBLIC_WAKE_WORD}"
+                "{wakeWord}"
               </span>{" "}
               to begin conversation
             </p>

@@ -3,110 +3,48 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { RealtimeAgent, RealtimeSession } from "@openai/agents-realtime";
 
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-  resultIndex: number;
+interface UseRealtimeAgentOptions {
+  onAudioStart?: () => void;
+  onAudioStopped?: () => void;
+  onUserSpeechStart?: () => void;
+  onUserSpeechStop?: () => void;
 }
 
-interface SpeechRecognitionErrorEvent extends Event {
-  error: string;
-  message: string;
-}
-
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
-  abort(): void;
-  onstart: ((this: SpeechRecognition, ev: Event) => any) | null;
-  onend: ((this: SpeechRecognition, ev: Event) => any) | null;
-  onresult:
-    | ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any)
-    | null;
-  onerror:
-    | ((this: SpeechRecognition, ev: SpeechRecognitionErrorEvent) => any)
-    | null;
-}
-
-declare global {
-  interface Window {
-    SpeechRecognition: {
-      new (): SpeechRecognition;
-    };
-    webkitSpeechRecognition: {
-      new (): SpeechRecognition;
-    };
-  }
-}
-
-interface RealtimeHookState {
+interface UseRealtimeAgentReturn {
   isConnected: boolean;
   isConnecting: boolean;
-  isListening: boolean;
-  conversationActive: boolean;
-  wakeWordDetected: boolean;
+  isSpeaking: boolean;
   error: string | null;
   agentName: string;
+  connect: () => Promise<void>;
+  disconnect: () => void;
+  clearError: () => void;
 }
 
-export function useRealtimeAgent() {
-  const [state, setState] = useState<RealtimeHookState>({
-    isConnected: false,
-    isConnecting: false,
-    isListening: false,
-    conversationActive: false,
-    wakeWordDetected: false,
-    error: null,
-    agentName: "Tour Guide",
-  });
+export function useRealtimeAgent(
+  options: UseRealtimeAgentOptions = {}
+): UseRealtimeAgentReturn {
+  const { onAudioStart, onAudioStopped, onUserSpeechStart, onUserSpeechStop } = options;
+
+  const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const sessionRef = useRef<RealtimeSession | null>(null);
   const agentRef = useRef<RealtimeAgent | null>(null);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const wakeWord = process.env.NEXT_PUBLIC_WAKE_WORD || "guide";
+  const isConnectingRef = useRef(false); // Synchronous lock to prevent race conditions
 
-  // Initialize speech recognition for wake word detection
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-
-      if (SpeechRecognition) {
-        recognitionRef.current = new SpeechRecognition();
-        recognitionRef.current.continuous = true;
-        recognitionRef.current.interimResults = true;
-        recognitionRef.current.lang = "en-US";
-
-        recognitionRef.current.onresult = handleSpeechResult;
-        recognitionRef.current.onerror = handleSpeechError;
-        recognitionRef.current.onend = handleSpeechEnd;
-      } else {
-        setState(prev => ({ ...prev, error: "Speech recognition not supported in this browser" }));
-      }
-    }
-
-    return () => {
-      // Cleanup on unmount
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-      if (sessionRef.current) {
-        sessionRef.current.close();
-      }
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
-      }
-    };
-  }, []);
+  const agentName = "Tour Guide";
 
   // Initialize the agent
   useEffect(() => {
-    agentRef.current = new RealtimeAgent({
-      name: "Tour Guide",
-      instructions: `You are a helpful AI tour guide. Provide brief, informative responses about places, attractions, and travel information. Keep responses concise and engaging. You can help with:
+    // Only create agent if it doesn't exist (prevents recreation on strict mode remount)
+    if (!agentRef.current) {
+      console.log("Creating RealtimeAgent instance");
+      agentRef.current = new RealtimeAgent({
+        name: agentName,
+        instructions: `You are a helpful AI tour guide. Provide brief, informative responses about places, attractions, and travel information. Keep responses concise and engaging. You can help with:
 
 - Tourist attractions and landmarks
 - Local restaurants and cuisine
@@ -117,116 +55,43 @@ export function useRealtimeAgent() {
 - Safety tips and travel advice
 
 Always be friendly, helpful, and informative. Keep responses conversational and easy to understand.`,
-    });
-  }, []);
-
-  // Speech recognition handlers
-  const handleSpeechResult = useCallback((event: SpeechRecognitionEvent) => {
-    const results = Array.from(event.results);
-    const transcript = results
-      .map((result) => result[0].transcript)
-      .join("")
-      .toLowerCase()
-      .trim();
-
-    console.log("Speech transcript:", transcript);
-
-    // Check for wake word (only if not already in conversation)
-    if (
-      !state.conversationActive &&
-      !state.wakeWordDetected &&
-      transcript.includes(wakeWord.toLowerCase())
-    ) {
-      console.log("Wake word detected! Starting conversation...");
-      setState(prev => ({
-        ...prev,
-        wakeWordDetected: true,
-        conversationActive: true,
-      }));
-      
-      playWakeWordSound();
-      resetSilenceTimer();
-      
-      // Connect to Realtime API when conversation starts
-      if (!state.isConnected) {
-        connect();
-      }
-      return;
+      });
     }
 
-    // In conversation mode, reset silence timer on any speech
-    if (state.conversationActive && transcript.length > 0) {
-      resetSilenceTimer();
-    }
-  }, [state.conversationActive, state.wakeWordDetected, state.isConnected, wakeWord]);
+    return () => {
+      // Cleanup on unmount (runs during strict mode, hot reload, and actual unmount)
+      console.log("useRealtimeAgent cleanup triggered");
 
-  const handleSpeechError = useCallback((event: SpeechRecognitionErrorEvent) => {
-    console.error("Speech recognition error:", event.error);
-    if (event.error !== "no-speech") {
-      setState(prev => ({ ...prev, error: `Speech recognition error: ${event.error}` }));
-    }
-  }, []);
-
-  const handleSpeechEnd = useCallback(() => {
-    if (state.isListening) {
-      // Restart recognition if we're still supposed to be listening
-      setTimeout(() => {
-        if (recognitionRef.current && state.isListening) {
-          recognitionRef.current.start();
-        }
-      }, 100);
-    }
-  }, [state.isListening]);
-
-  // Silence timeout management
-  const resetSilenceTimer = useCallback(() => {
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-    }
-
-    silenceTimerRef.current = setTimeout(() => {
-      console.log("Conversation timeout - ending session");
-      setState(prev => ({
-        ...prev,
-        conversationActive: false,
-        wakeWordDetected: false,
-      }));
-      
-      // Disconnect from Realtime API
       if (sessionRef.current) {
+        console.log("Closing active session during cleanup");
         sessionRef.current.close();
         sessionRef.current = null;
       }
-    }, 10000); // 10 seconds of silence
-  }, []);
 
-  // Play wake word sound
-  const playWakeWordSound = useCallback(() => {
-    if (typeof window !== "undefined") {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
+      // Clear all state
+      isConnectingRef.current = false;
 
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-
-      oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-      oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.1);
-
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
-
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.2);
-    }
+      // Note: We don't clear agentRef here to avoid recreation on strict mode remount
+    };
   }, []);
 
   const connect = useCallback(async () => {
-    if (!agentRef.current || state.isConnecting || state.isConnected) {
+    // Use ref-based lock to prevent race conditions (state updates are async)
+    if (!agentRef.current) {
+      console.error("Cannot connect: RealtimeAgent not initialized");
+      setError("Agent not initialized");
       return;
     }
 
-    setState(prev => ({ ...prev, isConnecting: true, error: null }));
+    if (isConnectingRef.current || sessionRef.current) {
+      console.log("Connection already in progress or active, ignoring duplicate call");
+      return;
+    }
+
+    // Set synchronous lock immediately
+    isConnectingRef.current = true;
+    setIsConnecting(true);
+    setError(null);
 
     try {
       // Get ephemeral token from backend
@@ -243,92 +108,92 @@ Always be friendly, helpful, and informative. Keep responses conversational and 
 
       const { token } = await tokenResponse.json();
 
-      // Create new session
+      // Create new session with WebRTC transport (automatic in browser)
       sessionRef.current = new RealtimeSession(agentRef.current, {
         model: "gpt-realtime",
+        config: {
+          audio: {
+            input: {
+              turnDetection: {
+                type: "server_vad",
+                threshold: 0.8, // Much higher threshold (less sensitive)
+                silenceDurationMs: 1000, // Wait 1 second of silence
+                prefixPaddingMs: 500, // More audio padding
+                createResponse: true, // Automatically trigger AI response
+              },
+            },
+          },
+        },
       });
 
       // Connect to the session
       await sessionRef.current.connect({ apiKey: token });
-      
-      // Set connected state after successful connection
-      setState(prev => ({ 
-        ...prev, 
-        isConnected: true, 
-        isConnecting: false,
-        isListening: true 
-      }));
-      
-    } catch (error) {
-      console.error("Failed to connect:", error);
-      setState(prev => ({ 
-        ...prev, 
-        error: (error as Error).message,
-        isConnecting: false 
-      }));
+
+      // Listen for audio events to track when AI is speaking
+      sessionRef.current.on("audio_start", () => {
+        console.log("AI started speaking");
+        setIsSpeaking(true);
+        onAudioStart?.();
+      });
+
+      sessionRef.current.on("audio_stopped", () => {
+        console.log("AI stopped speaking");
+        setIsSpeaking(false);
+        onAudioStopped?.();
+      });
+
+      // Listen for user speech events via transport layer
+      sessionRef.current.on("transport_event", (event) => {
+        if (event.type === "input_audio_buffer.speech_started") {
+          console.log("User started speaking");
+          onUserSpeechStart?.();
+        } else if (event.type === "input_audio_buffer.speech_stopped") {
+          console.log("User stopped speaking");
+          onUserSpeechStop?.();
+        }
+      });
+
+      setIsConnected(true);
+      setIsConnecting(false);
+      // Keep lock set - will be cleared on disconnect
+
+      console.log("Connected to OpenAI Realtime API via WebRTC");
+      console.log("Turn detection config:", {
+        threshold: 0.8,
+        silenceDurationMs: 1000,
+      });
+    } catch (err) {
+      console.error("Failed to connect:", err);
+      setError((err as Error).message);
+      setIsConnecting(false);
+      isConnectingRef.current = false; // Clear lock on error
     }
-  }, [state.isConnecting, state.isConnected]);
+  }, []);
 
   const disconnect = useCallback(() => {
     if (sessionRef.current) {
       sessionRef.current.close();
       sessionRef.current = null;
     }
-    setState(prev => ({ 
-      ...prev, 
-      isConnected: false, 
-      isListening: false,
-      conversationActive: false,
-      wakeWordDetected: false,
-    }));
-  }, []);
-
-  const startListening = useCallback(async () => {
-    setState(prev => ({ ...prev, error: null }));
-
-    try {
-      if (recognitionRef.current) {
-        recognitionRef.current.start();
-        setState(prev => ({ ...prev, isListening: true }));
-      }
-    } catch (err) {
-      setState(prev => ({ ...prev, error: `Failed to start listening: ${(err as Error).message}` }));
-    }
-  }, []);
-
-  const stopListening = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
-
-    setState(prev => ({ 
-      ...prev, 
-      isListening: false,
-      conversationActive: false,
-      wakeWordDetected: false,
-    }));
-
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-    }
-
-    // Disconnect from Realtime API
-    if (sessionRef.current) {
-      sessionRef.current.close();
-      sessionRef.current = null;
-    }
+    setIsConnected(false);
+    setIsConnecting(false);
+    setIsSpeaking(false);
+    isConnectingRef.current = false; // Clear lock on disconnect
+    console.log("Disconnected from OpenAI Realtime API");
   }, []);
 
   const clearError = useCallback(() => {
-    setState(prev => ({ ...prev, error: null }));
+    setError(null);
   }, []);
 
   return {
-    ...state,
+    isConnected,
+    isConnecting,
+    isSpeaking,
+    error,
+    agentName,
     connect,
     disconnect,
-    startListening,
-    stopListening,
     clearError,
   };
 }
