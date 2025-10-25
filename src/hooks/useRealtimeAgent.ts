@@ -42,6 +42,27 @@ export function useRealtimeAgent(
     // Only create agent if it doesn't exist (prevents recreation on strict mode remount)
     if (!agentRef.current) {
       console.log("Creating RealtimeAgent instance");
+
+      // Read user preferences from localStorage
+      let preferencesContext = "";
+      try {
+        const storedPrefs = localStorage.getItem("travelPreferences");
+        if (storedPrefs) {
+          const prefs = JSON.parse(storedPrefs);
+          console.log("Loading user preferences:", prefs);
+
+          // Use the AI-generated summary directly
+          if (prefs.summary) {
+            preferencesContext = `\n\nUSER PREFERENCES:
+${prefs.summary}
+
+IMPORTANT: Tailor all your recommendations and responses based on these preferences. Prioritize suggestions that align with the user's stated travel style and interests.`;
+          }
+        }
+      } catch (error) {
+        console.error("Error reading preferences:", error);
+      }
+
       agentRef.current = new RealtimeAgent({
         name: agentName,
         instructions: `You are a helpful AI tour guide. Provide brief, informative responses about places, attractions, and travel information. Keep responses concise and engaging. You can help with:
@@ -54,7 +75,7 @@ export function useRealtimeAgent(
 - Shopping and local markets
 - Safety tips and travel advice
 
-Always be friendly, helpful, and informative. Keep responses conversational and easy to understand.`,
+Always be friendly, helpful, and informative. Keep responses conversational and easy to understand.${preferencesContext}`,
       });
     }
 

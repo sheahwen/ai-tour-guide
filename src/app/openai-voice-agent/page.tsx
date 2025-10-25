@@ -2,9 +2,29 @@
 
 import { useRealtimeAgent } from "@/hooks/useRealtimeAgent";
 import { useWakeWordDetection } from "@/hooks/useWakeWordDetection";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+
+interface TravelPreferences {
+  summary: string;
+  timestamp: string;
+}
 
 export default function Home() {
   const wakeWord = process.env.NEXT_PUBLIC_WAKE_WORD || "guide";
+  const [preferences, setPreferences] = useState<TravelPreferences | null>(null);
+
+  // Load preferences from localStorage
+  useEffect(() => {
+    const storedPrefs = localStorage.getItem("travelPreferences");
+    if (storedPrefs) {
+      try {
+        setPreferences(JSON.parse(storedPrefs));
+      } catch (error) {
+        console.error("Error parsing preferences:", error);
+      }
+    }
+  }, []);
 
   // Wake word detection hook
   const {
@@ -109,6 +129,38 @@ export default function Home() {
             Voice-activated AI assistant ready to help
           </p>
         </div>
+
+        {/* Preferences Display */}
+        {preferences && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-start justify-between mb-2">
+              <h3 className="text-sm font-semibold text-blue-900">
+                Your Preferences
+              </h3>
+              <Link
+                href="/"
+                className="text-xs text-blue-600 hover:text-blue-800 underline"
+              >
+                Change
+              </Link>
+            </div>
+            <p className="text-sm text-blue-900 leading-relaxed">
+              {preferences.summary}
+            </p>
+          </div>
+        )}
+
+        {!preferences && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <p className="text-sm text-yellow-800">
+              No preferences set.{" "}
+              <Link href="/" className="font-medium underline">
+                Set your preferences
+              </Link>{" "}
+              for a personalized experience.
+            </p>
+          </div>
+        )}
 
         <div className="bg-white rounded-xl shadow-lg p-8 space-y-6">
           {/* Status Indicator */}
