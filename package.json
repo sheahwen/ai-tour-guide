@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@openai/agents-realtime": "^0.1.11",
     "@roamhq/wrtc": "^0.9.1",
     "next": "^16.0.0",
     "openai": "^6.6.0",
@@ -16,7 +17,8 @@
     "react-dom": "^19.2.0",
     "simple-peer": "^9.11.1",
     "uuid": "^13.0.0",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

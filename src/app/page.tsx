@@ -1,35 +1,36 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAudioManager } from "@/hooks/useAudioManager";
+import { useRealtimeAgent } from "@/hooks/useRealtimeAgent";
 
 export default function Home() {
   const {
+    isConnected,
+    isConnecting,
     isListening,
-    isProcessing,
-    isSpeaking,
     conversationActive,
+    wakeWordDetected,
     startListening,
     stopListening,
     error,
-  } = useAudioManager();
+    clearError,
+  } = useRealtimeAgent();
 
   const getStatusText = () => {
     if (error) return `Error: ${error}`;
-    if (isSpeaking) return "AI is speaking...";
-    if (isProcessing) return "Processing your question...";
-    if (conversationActive && isListening)
-      return "Listening for your question...";
-    if (isListening)
-      return `Say "${process.env.NEXT_PUBLIC_WAKE_WORD}" to start`;
+    if (isConnecting) return "Connecting to AI...";
+    if (conversationActive && isConnected) return "In conversation - speak naturally";
+    if (wakeWordDetected) return "Wake word detected - connecting...";
+    if (isListening) return `Say "${process.env.NEXT_PUBLIC_WAKE_WORD}" to start`;
     return "Click to start listening";
   };
 
   const getStatusColor = () => {
-    if (error) return "bg-error";
-    if (isSpeaking) return "bg-primary-500 speaking-bounce";
-    if (isProcessing) return "bg-warning";
-    if (isListening) return "bg-success listening-pulse";
+    if (error) return "bg-red-500";
+    if (isConnecting) return "bg-yellow-500";
+    if (conversationActive && isConnected) return "bg-green-500 listening-pulse";
+    if (wakeWordDetected) return "bg-blue-500";
+    if (isListening) return "bg-gray-500";
     return "bg-gray-400";
   };
 
@@ -58,17 +59,17 @@ export default function Home() {
           <div className="flex justify-center">
             <button
               onClick={isListening ? stopListening : startListening}
-              disabled={isProcessing || isSpeaking}
+              disabled={isConnecting}
               className={`
                 w-24 h-24 rounded-full flex items-center justify-center
                 transition-all duration-200 transform hover:scale-105
                 ${
                   isListening
                     ? "bg-red-500 hover:bg-red-600 text-white"
-                    : "bg-primary-500 hover:bg-primary-600 text-white"
+                    : "bg-blue-500 hover:bg-blue-600 text-white"
                 }
                 ${
-                  isProcessing || isSpeaking
+                  isConnecting
                     ? "opacity-50 cursor-not-allowed"
                     : ""
                 }
@@ -139,6 +140,12 @@ export default function Home() {
                 </h3>
                 <div className="mt-2 text-sm text-red-700">
                   <p>{error}</p>
+                  <button
+                    onClick={clearError}
+                    className="mt-2 text-xs bg-red-100 hover:bg-red-200 px-2 py-1 rounded"
+                  >
+                    Clear Error
+                  </button>
                 </div>
               </div>
             </div>
